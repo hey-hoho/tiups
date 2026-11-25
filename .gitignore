@@ -1,0 +1,10 @@
+# build output
+/dist/
+/tiup-backup
+/tiup-backup.exe
+*.tar.gz
+
+# editor / OS
+.idea/
+.vscode/
+.DS_Store
