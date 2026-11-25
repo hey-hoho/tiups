@@ -63,15 +63,38 @@ download() {
             curl_sec=""; wget_sec="" ;;
         *) die "refusing to download over an insecure URL: $1 (https is required)" ;;
     esac
-    if command -v curl >/dev/null 2>&1; then
-        # shellcheck disable=SC2086
-        curl $curl_sec -fsSL --retry 3 -o "$2" "$1" || return 1
-    elif command -v wget >/dev/null 2>&1; then
-        # shellcheck disable=SC2086
-        wget -q $wget_sec -O "$2" "$1" || return 1
-    else
-        die "need curl or wget to download $1"
-    fi
+    command -v curl >/dev/null 2>&1 || command -v wget >/dev/null 2>&1 || die "need curl or wget to download $1"
+
+    # GitHub is flaky on some networks (connection refused/reset, HTTP/2 stream errors, 5xx) and
+    # curl's own --retry skips most of those, so retry here. A definite "no" (404, 403, ...) is
+    # not retried. TIUP_BACKUP_RETRIES sets the number of attempts.
+    tries=${TIUP_BACKUP_RETRIES:-8}
+    case "$tries" in ""|*[!0-9]*) tries=8 ;; esac
+    [ "$tries" -ge 1 ] || tries=1
+    n=1
+    while :; do
+        if command -v curl >/dev/null 2>&1; then
+            # shellcheck disable=SC2086
+            # --speed-limit/--speed-time: give up on a stalled transfer (<1 KB/s for 30 s) instead of hanging
+            code=$(curl $curl_sec -sSL --connect-timeout 15 --speed-limit 1024 --speed-time 30 \
+                -o "$2" -w '%{http_code}' "$1" 2>/dev/null) && rc=0 || rc=$?
+            if [ "$rc" -eq 0 ] && [ "$code" = "200" ]; then return 0; fi
+            if [ "$rc" -eq 0 ]; then
+                case "$code" in
+                    400|401|403|404|410|451) warn "HTTP $code for $1"; return 1 ;;
+                esac
+            fi
+            why="curl exit $rc, HTTP ${code:-none}"
+        else
+            # shellcheck disable=SC2086
+            if wget -q -T 30 $wget_sec -O "$2" "$1" 2>/dev/null; then return 0; fi
+            why="wget failed"
+        fi
+        [ "$n" -lt "$tries" ] || { warn "giving up on $1 after $n attempt(s) ($why)"; return 1; }
+        warn "download failed ($why), retrying ($n/$tries)..."
+        n=$((n + 1))
+        sleep 2
+    done
 }
 
 # check_sha256 FILE SUMFILE: SUMFILE holds "<64 hex>  <name>" as written by sha256sum.

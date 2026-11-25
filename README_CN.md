@@ -25,6 +25,33 @@ tiup backup init-shell
 > `sync` 会复制 tiup 在 `storage/cluster/clusters/<集群名>/ssh/` 下为集群生成的密钥，但不包括你用 `-i`
 > 指定的、位于 `~/.tiup` 之外的密钥，也不包括只存在于 ssh-agent 里的密钥。
 
+## 快速开始
+
+第 1~4 步在当前运行 tiup 的机器上执行，第 5 步在备份节点上执行。
+
+```
+# 1. 安装（会在 ~/.bashrc 里加入 `tiup backup ...` 函数，然后加载）
+curl --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/hey-hoho/tiups/main/scripts/install.sh | sh
+. ~/.bashrc
+
+# 2. 添加备份节点（操作系统、架构要与本机相同）
+tiup backup add -N 10.0.0.2,10.0.0.3 -u tidb
+
+# 3. 先预览，再同步整个 ~/.tiup（第一次会让你确认信任每个节点的主机指纹）
+tiup backup sync --dry-run
+tiup backup sync
+
+# 4. 可选：每天凌晨 2 点自动同步（需要到各节点的密钥免密登录）
+tiup backup job -s "0 2 * * *"
+
+# 5. 在备份节点上，用新的登录 shell 接管
+ssh tidb@10.0.0.2
+tiup cluster list
+```
+
+如果本机用的是离线镜像（`tiup mirror set /path/...`），第 3 步要加 `--with-mirror`，否则节点上会报
+`stat ...: no such file or directory`，见[离线（本地）镜像](#离线本地镜像)。每一步的细节见后面的各节。
+
 ## 离线（本地）镜像
 
 如果源机器是用离线包装的（`tiup mirror set /path/to/tidb-community-server-...`），`tiup.toml` 里记录的是这个
@@ -127,8 +154,13 @@ curl --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/hey-hoho/
 脚本会从本项目的 GitHub Release 下载 `tiup-backup-<os>-<arch>.tar.gz` 和对应的 `.sha256`
 （`--version TAG` 或环境变量 `TIUP_BACKUP_VERSION` 指定版本，`--base-url URL` 或 `TIUP_BACKUP_BASE_URL`
 指向其他地址），校验通过才会安装；校验不一致、缺少校验文件、或者地址不是 https 时都会中止，什么都不装
-（`--no-verify` 可跳过校验），跳转到 http 的重定向也会被拒绝。整个脚本包在一个函数里，最后一行才调用，
-所以下载中途被截断时不会执行任何内容。目前只发布 linux 的 amd64 和 arm64 包。
+（`--no-verify` 可跳过校验），跳转到 http 的重定向也会被拒绝。因为 GitHub 在有些网络下不稳定，下载失败
+（连接被拒绝或重置、5xx、传输卡住）会自动重试，最多 8 次，每次间隔 2 秒（用 `TIUP_BACKUP_RETRIES=N`
+修改次数）；404 这类明确的答复不会重试。整个脚本包在一个函数里，最后一行才调用，所以下载中途被截断时
+不会执行任何内容。目前只发布 linux 的 amd64 和 arm64 包。
+
+有些网络会挡住 `raw.githubusercontent.com`（TLS 连接被重置），上面这条命令在脚本开始执行之前就会失败。
+遇到这种情况，请换别的方式下载 `install.sh`，或者解压发布包后运行包里的 `install.sh`（见下一节）。
 
 ### 解压发布包后安装
 

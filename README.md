@@ -17,6 +17,34 @@ tiup backup init-shell
 > `sync` copies the per-cluster key tiup generated under `storage/cluster/clusters/<name>/ssh/`, but not
 > keys you passed with `-i` from outside `~/.tiup`, nor keys held only in ssh-agent.
 
+## Quick start
+
+Run steps 1-4 on the machine that currently runs tiup; step 5 is on the backup node.
+
+```
+# 1. Install (adds a `tiup backup ...` function to ~/.bashrc, then load it)
+curl --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/hey-hoho/tiups/main/scripts/install.sh | sh
+. ~/.bashrc
+
+# 2. Register the backup nodes (same OS/arch as this machine)
+tiup backup add -N 10.0.0.2,10.0.0.3 -u tidb
+
+# 3. Preview, then sync the whole ~/.tiup (the first run asks you to trust each node's host key)
+tiup backup sync --dry-run
+tiup backup sync
+
+# 4. Optional: sync every night at 02:00 (needs key-based SSH to the nodes)
+tiup backup job -s "0 2 * * *"
+
+# 5. On a backup node, in a new login shell, take over
+ssh tidb@10.0.0.2
+tiup cluster list
+```
+
+If this machine uses an offline mirror (`tiup mirror set /path/...`), add `--with-mirror` to step 3, or the node
+fails with `stat ...: no such file or directory`; see [Offline (local) mirror](#offline-local-mirror). Details
+for each step are in the sections below.
+
 ## Offline (local) mirror
 
 If the source machine was set up from an offline package (`tiup mirror set /path/to/tidb-community-server-...`),
@@ -125,8 +153,15 @@ The script downloads `tiup-backup-<os>-<arch>.tar.gz` and its `.sha256` from the
 project (`--version TAG` or `TIUP_BACKUP_VERSION` picks a release; `--base-url URL` or `TIUP_BACKUP_BASE_URL`
 points it elsewhere), checks the checksum, and aborts without installing anything if it does not match, if the
 checksum file is missing or if the URL is not https (`--no-verify` skips the check). Redirects to plain http
-are refused. The whole script runs inside one function that is called on its last line, so a download cut off
-halfway executes nothing. Only linux amd64/arm64 packages are published.
+are refused. Because GitHub is unreliable on some networks, a failed download (connection refused or reset,
+5xx, a stalled transfer) is retried up to 8 times, 2 seconds apart (`TIUP_BACKUP_RETRIES=N` changes the number
+of attempts); a definite answer such as 404 is not retried. The whole script runs inside one function that is
+called on its last line, so a download cut off halfway executes nothing. Only linux amd64/arm64 packages are
+published.
+
+`raw.githubusercontent.com` is blocked on some networks (the TLS connection is reset), which makes the command
+above fail before the script even starts. In that case download `install.sh` another way, or unpack the release
+package and run its `install.sh` (see below).
 
 ### From an unpacked release package
 
